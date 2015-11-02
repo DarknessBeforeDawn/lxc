@@ -247,6 +247,59 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
     </refsect2>
 
     <refsect2>
+      <title>Init ID</title>
+      <para>
+        Sets the UID/GID to use for the init system, and subsequent command, executed by lxc-execute.
+
+        These options are only used when lxc-execute is started in a private user namespace.
+
+        Defaults to: UID(0), GID(0)
+      </para>
+      <variablelist>
+        <varlistentry>
+          <term>
+            <option>lxc.init_uid</option>
+          </term>
+          <listitem>
+            <para>
+              UID to use within a private user namesapce for init.
+            </para>
+          </listitem>
+        </varlistentry>
+        <varlistentry>
+          <term>
+            <option>lxc.init_gid</option>
+          </term>
+          <listitem>
+            <para>
+              GID to use within a private user namesapce for init.
+            </para>
+          </listitem>
+        </varlistentry>
+      </variablelist>
+    </refsect2>
+
+    <refsect2>
+      <title>Ephemeral</title>
+      <para>
+        Allows one to specify whether a container will be destroyed on shutdown.
+      </para>
+      <variablelist>
+        <varlistentry>
+          <term>
+            <option>lxc.ephemeral</option>
+          </term>
+          <listitem>
+            <para>
+              The only allowed values are 0 and 1. Set this to 1 to destroy a
+              container on shutdown. 
+            </para>
+          </listitem>
+        </varlistentry>
+      </variablelist>
+    </refsect2>
+
+    <refsect2>
       <title>Network</title>
       <para>
         The network section defines how the network is virtualized in
@@ -727,6 +780,18 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
         container. This is useful to mount /etc, /var or /home for
         examples.
       </para>
+      <para>
+	NOTE - LXC will generally ensure that mount targets and relative
+	bind-mount sources are properly confined under the container
+	root, to avoid attacks involving over-mounting host directories
+	and files.  (Symbolic links in absolute mount sources are ignored)
+	However, if the container configuration first mounts a directory which
+	is under the control of the container user, such as /home/joe, into
+        the container at some <filename>path</filename>, and then mounts
+        under <filename>path</filename>, then a TOCTTOU attack would be
+        possible where the container user modifies a symbolic link under
+        his home directory at just the right time.
+      </para>
       <variablelist>
         <varlistentry>
           <term>
@@ -770,6 +835,11 @@ proc proc proc nodev,noexec,nosuid 0 0
             <para>
               specify a mount point corresponding to a line in the
               fstab format.
+
+              Moreover lxc add two options to mount.
+              <option>optional</option> don't fail if mount does not work.
+              <option>create=dir</option> or <option>create=file</option>
+              to create dir (or file) when the point will be mounted.
             </para>
           </listitem>
         </varlistentry>
@@ -1242,9 +1312,12 @@ mknod errno 0
           <listitem><para> Container name. </para></listitem>
           <listitem><para> Section (always 'lxc'). </para></listitem>
           <listitem><para> The hook type (i.e. 'clone' or 'pre-mount'). </para></listitem>
-          <listitem><para> Additional arguments In the
+          <listitem><para> Additional arguments. In the
           case of the clone hook, any extra arguments passed to
-          lxc-clone will appear as further arguments to the hook. </para></listitem>
+          lxc-clone will appear as further arguments to the hook.
+          In the case of the stop hook, paths to filedescriptors
+          for each of the container's namespaces along with their types
+          are passed. </para></listitem>
         </itemizedlist>
         The following environment variables are set:
         <itemizedlist>
@@ -1334,6 +1407,26 @@ mknod errno 0
               A hook to be run in the container's namespace immediately
               before executing the container's init.  This requires the
               program to be available in the container.
+            </para>
+          </listitem>
+        </varlistentry>
+      </variablelist>
+      <variablelist>
+        <varlistentry>
+          <term>
+            <option>lxc.hook.stop</option>
+          </term>
+          <listitem>
+            <para>
+              A hook to be run in the host's namespace with references
+              to the container's namespaces after the container has been shut
+              down. For each namespace an extra argument is passed to the hook
+              containing the namespace's type and a filename that can be used to
+              obtain a file descriptor to the corresponding namespace, separated
+              by a colon. The type is the name as it would appear in the
+              <filename>/proc/PID/ns</filename> directory.
+              For instance for the mount namespace the argument usually looks
+              like <filename>mnt:/proc/PID/fd/12</filename>.
             </para>
           </listitem>
         </varlistentry>

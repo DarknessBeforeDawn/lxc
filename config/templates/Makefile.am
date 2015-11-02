@@ -18,12 +18,15 @@ templatesconfig_DATA = \
 	gentoo.common.conf \
 	gentoo.moresecure.conf \
 	gentoo.userns.conf \
+	nesting.conf \
 	opensuse.common.conf \
 	opensuse.userns.conf \
 	oracle.common.conf \
 	oracle.userns.conf \
 	plamo.common.conf \
 	plamo.userns.conf \
+	slackware.common.conf \
+	slackware.userns.conf \
 	ubuntu-cloud.common.conf \
 	ubuntu-cloud.lucid.conf \
 	ubuntu-cloud.userns.conf \

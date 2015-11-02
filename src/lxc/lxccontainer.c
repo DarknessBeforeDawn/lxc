@@ -19,6 +19,7 @@
  */
 
 #define _GNU_SOURCE
+#include <sys/mman.h>
 #include <assert.h>
 #include <stdarg.h>
 #include <pthread.h>
@@ -1364,19 +1365,26 @@ static bool do_lxcapi_create(struct lxc_container *c, const char *t,
 		goto free_tpath;
 
 	/*
-	 * either template or rootfs.path should be set.
 	 * if both template and rootfs.path are set, template is setup as rootfs.path.
 	 * container is already created if we have a config and rootfs.path is accessible
 	 */
-	if (!c->lxc_conf->rootfs.path && !tpath)
-		/* no template passed in and rootfs does not exist: error */
+	if (!c->lxc_conf->rootfs.path && !tpath) {
+		/* no template passed in and rootfs does not exist */
+		if (!c->save_config(c, NULL)) {
+			ERROR("failed to save starting configuration for %s\n", c->name);
+			goto out;
+		}
+		ret = true;
 		goto out;
+	}
 	if (c->lxc_conf->rootfs.path && access(c->lxc_conf->rootfs.path, F_OK) != 0)
 		/* rootfs passed into configuration, but does not exist: error */
 		goto out;
 	if (do_lxcapi_is_defined(c) && c->lxc_conf->rootfs.path && !tpath) {
 		/* Rootfs already existed, user just wanted to save the
 		 * loaded configuration */
+		if (!c->save_config(c, NULL))
+			ERROR("failed to save starting configuration for %s\n", c->name);
 		ret = true;
 		goto out;
 	}
@@ -1970,47 +1978,127 @@ out:
 
 WRAP_API_1(bool, lxcapi_save_config, const char *)
 
-static bool mod_rdep(struct lxc_container *c, bool inc)
-{
-	char path[MAXPATHLEN];
-	int ret, v = 0;
-	FILE *f;
-	bool bret = false;
 
-	if (container_disk_lock(c))
+static bool mod_rdep(struct lxc_container *c0, struct lxc_container *c, bool inc)
+{
+	FILE *f1;
+	struct stat fbuf;
+	void *buf = NULL;
+	char *del = NULL;
+	char path[MAXPATHLEN];
+	char newpath[MAXPATHLEN];
+	int fd, ret, n = 0, v = 0;
+	bool bret = false;
+	size_t len = 0, bytes = 0;
+
+	if (container_disk_lock(c0))
 		return false;
-	ret = snprintf(path, MAXPATHLEN, "%s/%s/lxc_snapshots", c->config_path,
-			c->name);
+
+	ret = snprintf(path, MAXPATHLEN, "%s/%s/lxc_snapshots", c0->config_path, c0->name);
 	if (ret < 0 || ret > MAXPATHLEN)
 		goto out;
-	f = fopen(path, "r");
-	if (f) {
-		ret = fscanf(f, "%d", &v);
-		fclose(f);
-		if (ret != 1) {
-			ERROR("Corrupted file %s", path);
-			goto out;
+	ret = snprintf(newpath, MAXPATHLEN, "%s\n%s\n", c->config_path, c->name);
+	if (ret < 0 || ret > MAXPATHLEN)
+		goto out;
+
+	/* If we find an lxc-snapshot file using the old format only listing the
+	 * number of snapshots we will keep using it. */
+	f1 = fopen(path, "r");
+	if (f1) {
+		n = fscanf(f1, "%d", &v);
+		fclose(f1);
+		if (n == 1 && v == 0) {
+			remove(path);
+			n = 0;
 		}
 	}
-	v += inc ? 1 : -1;
-	f = fopen(path, "w");
-	if (!f)
-		goto out;
-	if (fprintf(f, "%d\n", v) < 0) {
-		ERROR("Error writing new snapshots value");
-		fclose(f);
-		goto out;
-	}
-	ret = fclose(f);
-	if (ret != 0) {
-		SYSERROR("Error writing to or closing snapshots file");
-		goto out;
+	if (n == 1) {
+		v += inc ? 1 : -1;
+		f1 = fopen(path, "w");
+		if (!f1)
+			goto out;
+		if (fprintf(f1, "%d\n", v) < 0) {
+			ERROR("Error writing new snapshots value");
+			fclose(f1);
+			goto out;
+		}
+		ret = fclose(f1);
+		if (ret != 0) {
+			SYSERROR("Error writing to or closing snapshots file");
+			goto out;
+		}
+	} else {
+		/* Here we know that we have or can use an lxc-snapshot file
+		 * using the new format. */
+		if (inc) {
+			f1 = fopen(path, "a");
+			if (!f1)
+				goto out;
+
+			if (fprintf(f1, "%s", newpath) < 0) {
+				ERROR("Error writing new snapshots entry");
+				ret = fclose(f1);
+				if (ret != 0)
+					SYSERROR("Error writing to or closing snapshots file");
+				goto out;
+			}
+
+			ret = fclose(f1);
+			if (ret != 0) {
+				SYSERROR("Error writing to or closing snapshots file");
+				goto out;
+			}
+		} else if (!inc) {
+			if ((fd = open(path, O_RDWR | O_CLOEXEC)) < 0)
+				goto out;
+
+			if (fstat(fd, &fbuf) < 0) {
+				close(fd);
+				goto out;
+			}
+
+			if (fbuf.st_size != 0) {
+				/* write terminating \0-byte to file */
+				if (pwrite(fd, "", 1, fbuf.st_size) <= 0) {
+					close(fd);
+					goto out;
+				}
+
+				buf = mmap(NULL, fbuf.st_size + 1, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+				if (buf == MAP_FAILED) {
+					SYSERROR("Failed to create mapping %s", path);
+					close(fd);
+					goto out;
+				}
+
+				len = strlen(newpath);
+				while ((del = strstr((char *)buf, newpath))) {
+					memmove(del, del + len, strlen(del) - len + 1);
+					bytes += len;
+				}
+
+				munmap(buf, fbuf.st_size + 1);
+				if (ftruncate(fd, fbuf.st_size - bytes) < 0) {
+					SYSERROR("Failed to truncate file %s", path);
+					close(fd);
+					goto out;
+				}
+			}
+			close(fd);
+		}
+
+		/* If the lxc-snapshot file is empty, remove it. */
+		if (stat(path, &fbuf) < 0)
+			goto out;
+		if (!fbuf.st_size) {
+			remove(path);
+		}
 	}
 
 	bret = true;
 
 out:
-	container_disk_unlock(c);
+	container_disk_unlock(c0);
 	return bret;
 }
 
@@ -2023,7 +2111,7 @@ static void strip_newline(char *p)
 		p[len-1] = '\0';
 }
 
-static void mod_all_rdeps(struct lxc_container *c, bool inc)
+void mod_all_rdeps(struct lxc_container *c, bool inc)
 {
 	struct lxc_container *p;
 	char *lxcpath = NULL, *lxcname = NULL, path[MAXPATHLEN];
@@ -2052,8 +2140,8 @@ static void mod_all_rdeps(struct lxc_container *c, bool inc)
 				lxcpath, lxcname);
 			continue;
 		}
-		if (!mod_rdep(p, inc))
-			ERROR("Failed to increase numsnapshots for %s:%s",
+		if (!mod_rdep(p, c, inc))
+			ERROR("Failed to update snapshots file for %s:%s",
 				lxcpath, lxcname);
 		lxc_container_put(p);
 	}
@@ -2065,22 +2153,30 @@ out:
 
 static bool has_fs_snapshots(struct lxc_container *c)
 {
+	FILE *f;
 	char path[MAXPATHLEN];
 	int ret, v;
-	FILE *f;
+	struct stat fbuf;
 	bool bret = false;
 
 	ret = snprintf(path, MAXPATHLEN, "%s/%s/lxc_snapshots", c->config_path,
 			c->name);
 	if (ret < 0 || ret > MAXPATHLEN)
 		goto out;
-	f = fopen(path, "r");
-	if (!f)
+	/* If the file doesn't exist there are no snapshots. */
+	if (stat(path, &fbuf) < 0)
 		goto out;
-	ret = fscanf(f, "%d", &v);
-	fclose(f);
-	if (ret != 1)
-		goto out;
+	v = fbuf.st_size;
+	if (v != 0) {
+		f = fopen(path, "r");
+		if (!f)
+			goto out;
+		ret = fscanf(f, "%d", &v);
+		fclose(f);
+		// TODO: Figure out what to do with the return value of fscanf.
+		if (ret != 1)
+			INFO("Container uses new lxc-snapshots format %s", path);
+	}
 	bret = v != 0;
 
 out:
@@ -2115,48 +2211,25 @@ static bool has_snapshots(struct lxc_container *c)
 	return count > 0;
 }
 
+static bool do_destroy_container(struct lxc_conf *conf) {
+	if (am_unpriv()) {
+		if (userns_exec_1(conf, bdev_destroy_wrapper, conf) < 0)
+			return false;
+		return true;
+	}
+	return bdev_destroy(conf);
+}
+
 static int lxc_rmdir_onedev_wrapper(void *data)
 {
 	char *arg = (char *) data;
 	return lxc_rmdir_onedev(arg, "snaps");
 }
 
-static int do_bdev_destroy(struct lxc_conf *conf)
-{
-	struct bdev *r;
-	int ret = 0;
-
-	r = bdev_init(conf, conf->rootfs.path, conf->rootfs.mount, NULL);
-	if (!r)
-		return -1;
-
-	if (r->ops->destroy(r) < 0)
-		ret = -1;
-	bdev_put(r);
-	return ret;
-}
-
-static int bdev_destroy_wrapper(void *data)
-{
-	struct lxc_conf *conf = data;
-
-	if (setgid(0) < 0) {
-		ERROR("Failed to setgid to 0");
-		return -1;
-	}
-	if (setgroups(0, NULL) < 0)
-		WARN("Failed to clear groups");
-	if (setuid(0) < 0) {
-		ERROR("Failed to setuid to 0");
-		return -1;
-	}
-	return do_bdev_destroy(conf);
-}
-
 static bool container_destroy(struct lxc_container *c)
 {
 	bool bret = false;
-	int ret;
+	int ret = 0;
 	struct lxc_conf *conf;
 
 	if (!c || !do_lxcapi_is_defined(c))
@@ -2174,16 +2247,16 @@ static bool container_destroy(struct lxc_container *c)
 
 	if (conf && !lxc_list_empty(&conf->hooks[LXCHOOK_DESTROY])) {
 		/* Start of environment variable setup for hooks */
-		if (setenv("LXC_NAME", c->name, 1)) {
+		if (c->name && setenv("LXC_NAME", c->name, 1)) {
 			SYSERROR("failed to set environment variable for container name");
 		}
-		if (setenv("LXC_CONFIG_FILE", conf->rcfile, 1)) {
+		if (conf->rcfile && setenv("LXC_CONFIG_FILE", conf->rcfile, 1)) {
 			SYSERROR("failed to set environment variable for config path");
 		}
-		if (setenv("LXC_ROOTFS_MOUNT", conf->rootfs.mount, 1)) {
+		if (conf->rootfs.mount && setenv("LXC_ROOTFS_MOUNT", conf->rootfs.mount, 1)) {
 			SYSERROR("failed to set environment variable for rootfs mount");
 		}
-		if (setenv("LXC_ROOTFS_PATH", conf->rootfs.path, 1)) {
+		if (conf->rootfs.path && setenv("LXC_ROOTFS_PATH", conf->rootfs.path, 1)) {
 			SYSERROR("failed to set environment variable for rootfs mount");
 		}
 		if (conf->console.path && setenv("LXC_CONSOLE", conf->console.path, 1)) {
@@ -2209,14 +2282,11 @@ static bool container_destroy(struct lxc_container *c)
 	}
 
 	if (conf && conf->rootfs.path && conf->rootfs.mount) {
-		if (am_unpriv())
-			ret = userns_exec_1(conf, bdev_destroy_wrapper, conf);
-		else
-			ret = do_bdev_destroy(conf);
-		if (ret < 0) {
+		if (!do_destroy_container(conf)) {
 			ERROR("Error destroying rootfs for %s", c->name);
 			goto out;
 		}
+		INFO("Destroyed rootfs for %s", c->name);
 	}
 
 	mod_all_rdeps(c, false);
@@ -2232,6 +2302,8 @@ static bool container_destroy(struct lxc_container *c)
 		ERROR("Error destroying container directory for %s", c->name);
 		goto out;
 	}
+	INFO("Destroyed directory for %s", c->name);
+
 	bret = true;
 
 out:
@@ -2743,19 +2815,19 @@ static int clone_update_rootfs(struct clone_update_data *data)
 
 	if (!lxc_list_empty(&conf->hooks[LXCHOOK_CLONE])) {
 		/* Start of environment variable setup for hooks */
-		if (setenv("LXC_SRC_NAME", c0->name, 1)) {
+		if (c0->name && setenv("LXC_SRC_NAME", c0->name, 1)) {
 			SYSERROR("failed to set environment variable for source container name");
 		}
-		if (setenv("LXC_NAME", c->name, 1)) {
+		if (c->name && setenv("LXC_NAME", c->name, 1)) {
 			SYSERROR("failed to set environment variable for container name");
 		}
-		if (setenv("LXC_CONFIG_FILE", conf->rcfile, 1)) {
+		if (conf->rcfile && setenv("LXC_CONFIG_FILE", conf->rcfile, 1)) {
 			SYSERROR("failed to set environment variable for config path");
 		}
-		if (setenv("LXC_ROOTFS_MOUNT", bdev->dest, 1)) {
+		if (bdev->dest && setenv("LXC_ROOTFS_MOUNT", bdev->dest, 1)) {
 			SYSERROR("failed to set environment variable for rootfs mount");
 		}
-		if (setenv("LXC_ROOTFS_PATH", conf->rootfs.path, 1)) {
+		if (conf->rootfs.path && setenv("LXC_ROOTFS_PATH", conf->rootfs.path, 1)) {
 			SYSERROR("failed to set environment variable for rootfs mount");
 		}
 
@@ -2817,7 +2889,7 @@ static int create_file_dirname(char *path, struct lxc_conf *conf)
 	if (!p)
 		return -1;
 	*p = '\0';
-        ret = do_create_container_dir(path, conf);
+	ret = do_create_container_dir(path, conf);
 	*p = '/';
 	return ret;
 }
@@ -2906,12 +2978,15 @@ static struct lxc_container *do_lxcapi_clone(struct lxc_container *c, const char
 	if (ret < 0)
 		goto out;
 
-	clear_unexp_config_line(c2->lxc_conf, "lxc.utsname", false);
 
 	// update utsname
-	if (!set_config_item_locked(c2, "lxc.utsname", newname)) {
-		ERROR("Error setting new hostname");
-		goto out;
+	if (!(flags & LXC_CLONE_KEEPNAME)) {
+		clear_unexp_config_line(c2->lxc_conf, "lxc.utsname", false);
+
+		if (!set_config_item_locked(c2, "lxc.utsname", newname)) {
+			ERROR("Error setting new hostname");
+			goto out;
+		}
 	}
 
 	// copy hooks

@@ -88,11 +88,31 @@ struct lxc_arguments {
 	char *lvname, *vgname, *thinpool;
 	char *zfsroot, *lowerdir, *dir;
 
+	/* lxc-execute */
+	uid_t uid;
+	gid_t gid;
+
 	/* auto-start */
 	int all;
 	int ignore_auto;
 	int list;
 	char *groups;
+
+	/* lxc-snapshot and lxc-clone */
+	enum task {
+		DESTROY,
+		LIST,
+		RESTORE,
+		SNAP,
+		RENAME,
+	} task;
+	int print_comments;
+	char *commentfile;
+	char *newname;
+	char *newpath;
+	char *snapname;
+	int keepname;
+	int keepmac;
 
 	/* remaining arguments */
 	char *const *argv;

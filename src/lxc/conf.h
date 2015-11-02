@@ -279,7 +279,7 @@ enum {
  */
 enum lxchooks {
 	LXCHOOK_PRESTART, LXCHOOK_PREMOUNT, LXCHOOK_MOUNT, LXCHOOK_AUTODEV,
-	LXCHOOK_START, LXCHOOK_POSTSTOP, LXCHOOK_CLONE, LXCHOOK_DESTROY,
+	LXCHOOK_START, LXCHOOK_STOP, LXCHOOK_POSTSTOP, LXCHOOK_CLONE, LXCHOOK_DESTROY,
 	NUM_LXC_HOOKS};
 extern char *lxchook_names[NUM_LXC_HOOKS];
 
@@ -365,6 +365,14 @@ struct lxc_conf {
 
 	/* init command */
 	char *init_cmd;
+
+	/* if running in a new user namespace, the UID/GID that init and COMMAND
+	 * should run under when using lxc-execute */
+	uid_t init_uid;
+	gid_t init_gid;
+
+	/* indicator if the container will be destroyed on shutdown */
+	int ephemeral;
 };
 
 #ifdef HAVE_TLS

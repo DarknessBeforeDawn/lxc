@@ -40,6 +40,7 @@ templates/lxc-openmandriva
 templates/lxc-opensuse
 templates/lxc-oracle
 templates/lxc-plamo
+templates/lxc-slackware
 templates/lxc-sshd
 templates/lxc-ubuntu
 templates/lxc-ubuntu-cloud
@@ -122,6 +123,7 @@ config/init/common/lxc-net
 config/init/systemd/lxc-autostart-helper
 config/init/systemd/lxc-net.service
 config/init/systemd/lxc.service
+config/init/systemd/lxc@.service
 config/init/sysvinit/lxc
 config/init/sysvinit/lxc-containers
 config/init/sysvinit/lxc-net
@@ -135,9 +137,14 @@ doc/ja/*.5
 doc/ja/*.7
 doc/ja/legacy/*.1
 doc/legacy/*.1
+doc/ko/*.1
+doc/ko/*.5
+doc/ko/*.7
 doc/manpage.links
 doc/manpage.refs
 doc/api/html/*
+
+hooks/unmount-namespace
 
 m4/
 

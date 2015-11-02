@@ -54,6 +54,8 @@ if DISTRO_UBUNTU
 bin_SCRIPTS += \
 	lxc-test-apparmor-mount \
 	lxc-test-checkpoint-restore \
+	lxc-test-snapdeps \
+	lxc-test-symlink \
 	lxc-test-ubuntu \
 	lxc-test-unpriv \
 	lxc-test-usernic
@@ -80,6 +82,8 @@ EXTRA_DIST = \
 	lxc-test-checkpoint-restore \
 	lxc-test-cloneconfig \
 	lxc-test-createconfig \
+	lxc-test-snapdeps \
+	lxc-test-symlink \
 	lxc-test-ubuntu \
 	lxc-test-unpriv \
 	may_control.c \

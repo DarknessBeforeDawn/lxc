@@ -334,6 +334,80 @@ by KATOH Yasufumi <karma at jazz.email.ne.jp>
     </refsect2>
 
     <refsect2>
+      <title><!-- Init ID -->Init が使う ID</title>
+      <para>
+        <!--
+        Sets the UID/GID to use for the init system, and subsequent command, executed by lxc-execute.
+        -->
+        lxc-execute が実行するコンテナの init と、その後に起動するコマンドが使用する UID/GID を設定します。
+
+        <!--
+        These options are only used when lxc-execute is started in a private user namespace.
+        -->
+        このオプションは lxc-execute がユーザ名前空間内で起動するときのみ使われます。
+
+        <!--
+        Defaults to: UID(0), GID(0)
+        -->
+        デフォルト値は UID(0), GID(0) です。
+      </para>
+      <variablelist>
+        <varlistentry>
+          <term>
+            <option>lxc.init_uid</option>
+          </term>
+          <listitem>
+            <para>
+              <!--
+              UID to use within a private user namesapce for init.
+                -->
+              ユーザ名前空間内で init が使う UID です。
+            </para>
+          </listitem>
+        </varlistentry>
+        <varlistentry>
+          <term>
+            <option>lxc.init_gid</option>
+          </term>
+          <listitem>
+            <para>
+              <!--
+              GID to use within a private user namesapce for init.
+                -->
+              ユーザ名前空間内で init が使う GID です。
+            </para>
+          </listitem>
+        </varlistentry>
+      </variablelist>
+    </refsect2>
+
+    <refsect2>
+      <title><!-- Ephemeral -->一時的なコンテナ</title>
+      <para>
+        <!--
+        Allows one to specify whether a container will be destroyed on shutdown.
+          -->
+        シャットダウン後にコンテナを削除するかどうかを指定できます。
+      </para>
+      <variablelist>
+        <varlistentry>
+          <term>
+            <option>lxc.ephemeral</option>
+          </term>
+          <listitem>
+            <para>
+              <!--
+              The only allowed values are 0 and 1. Set this to 1 to destroy a
+              container on shutdown. 
+                -->
+              指定できる値は 0 または 1 のみです。この値を 1 に設定すると、シャットダウン後にコンテナを削除します。
+            </para>
+          </listitem>
+        </varlistentry>
+      </variablelist>
+    </refsect2>
+
+    <refsect2>
       <title><!-- Network -->ネットワーク</title>
       <para>
         <!--
@@ -1003,6 +1077,23 @@ by KATOH Yasufumi <karma at jazz.email.ne.jp>
         これらのマウントポイントは、コンテナだけに見え、コンテナ外で実行されるプロセスから見えることはありません。
         例えば、/etc や /var や /home をマウントするときに役に立つでしょう。
       </para>
+      <para>
+	<!--
+	NOTE - LXC will generally ensure that mount targets and relative
+	bind-mount sources are properly confined under the container
+	root, to avoid attacks involving over-mounting host directories
+	and files.  (Symbolic links in absolute mount sources are ignored)
+	However, if the container configuration first mounts a directory which
+	is under the control of the container user, such as /home/joe, into
+        the container at some <filename>path</filename>, and then mounts
+        under <filename>path</filename>, then a TOCTTOU attack would be
+        possible where the container user modifies a symbolic link under
+        his home directory at just the right time.
+	  -->
+	注意: 通常 LXC は、マウント対象と相対パス指定のバインドマウントを、適切にコンテナルート以下に閉じ込めます。
+	これは、ホストのディレクトリやファイルに対して重ね合わせを行うようなマウントによる攻撃を防ぎます。(絶対パス指定のマウントソース中の各パスがシンボリックリンクである場合は無視されます。)
+	しかし、もしコンテナの設定が最初に、/home/joe のようなコンテナユーザのコントロール配下にあるディレクトリを、コンテナ中のある <filename>path</filename> にマウントし、その後 <filename>path</filename> 以下でマウントが行われるような場合、コンテナユーザがタイミングを見計らって自身のホームディレクトリ以下でシンボリックリンクを操作するような TOCTTOU 攻撃が成立する可能性があります。
+      </para>
       <variablelist>
 	<varlistentry>
 	  <term>
@@ -1065,6 +1156,16 @@ proc proc proc nodev,noexec,nosuid 0 0
 	      fstab format.
               -->
               fstab フォーマットの一行と同じフォーマットのマウントポイントの指定をします。
+
+              <!--
+              Moreover lxc add two options to mount.
+              <option>optional</option> don't fail if mount does not work.
+              <option>create=dir</option> or <option>create=file</option>
+              to create dir (or file) when the point will be mounted.
+              -->
+              fstab フォーマットに加えて、LXC ではマウントに対して独自の 2 つのオプションが使えます。
+              <option>optional</option> は、マウントが失敗しても失敗を返さずに無視します。
+              <option>create=dir</option> と <option>create=file</option> は、マウントポイントをマウントする際にディレクトリもしくはファイルを作成します。
 	    </para>
 	  </listitem>
 	</varlistentry>
@@ -1749,9 +1850,12 @@ mknod errno 0
 	  <listitem><para> Container name. </para></listitem>
 	  <listitem><para> Section (always 'lxc'). </para></listitem>
 	  <listitem><para> The hook type (i.e. 'clone' or 'pre-mount'). </para></listitem>
-	  <listitem><para> Additional arguments In the
+	  <listitem><para> Additional arguments. In the
 	  case of the clone hook, any extra arguments passed to
-	  lxc-clone will appear as further arguments to the hook. </para></listitem>
+          lxc-clone will appear as further arguments to the hook.
+          In the case of the stop hook, paths to filedescriptors
+          for each of the container's namespaces along with their types
+          are passed. </para></listitem>
 	</itemizedlist>
 	The following environment variables are set:
 	<itemizedlist>
@@ -1767,7 +1871,7 @@ mknod errno 0
 	  <listitem><para>コンテナ名</para></listitem>
 	  <listitem><para>セクション (常に 'lxc')</para></listitem>
 	  <listitem><para>フックのタイプ ('clone' や 'pre-mount' など)</para></listitem>
-	  <listitem><para>追加の引数。clone フックの場合、lxc-clone に渡される追加の引数は、フックへの引数として追加されます。</para></listitem>
+	  <listitem><para>追加の引数。clone フックの場合、lxc-clone に渡される追加の引数は、フックへの引数として追加されます。stop フックの場合は、コンテナの名前空間のそれぞれに対するファイルディスクリプタへのパスが、名前空間名とともに渡されます。</para></listitem>
 	</itemizedlist>
         以下の環境変数がセットされます。
 	<itemizedlist>
@@ -1886,6 +1990,32 @@ mknod errno 0
 	    </para>
 	  </listitem>
 	</varlistentry>
+      </variablelist>
+      <variablelist>
+        <varlistentry>
+          <term>
+            <option>lxc.hook.stop</option>
+          </term>
+          <listitem>
+            <para>
+	      <!--
+              A hook to be run in the host's namespace with references
+              to the container's namespaces after the container has been shut
+              down. For each namespace an extra argument is passed to the hook
+              containing the namespace's type and a filename that can be used to
+              obtain a file descriptor to the corresponding namespace, separated
+              by a colon. The type is the name as it would appear in the
+              <filename>/proc/PID/ns</filename> directory.
+              For instance for the mount namespace the argument usually looks
+              like <filename>mnt:/proc/PID/fd/12</filename>.
+	      -->
+	      コンテナのシャットダウン後、コンテナの名前空間への参照とともに、ホストの名前空間で実行されるフックです。
+	      それぞれの名前空間に対応する追加の引数がフックに渡されます。その引数にはコロンで区切られた名前空間のタイプ名とファイル名が含まれており、ファイル名は名前空間に対するファイルディスクリプタを取得するのに使えます。
+	      タイプ名は <filename>/proc/PID/ns</filename> ディレクトリ内のファイル名です。
+	      例えば、マウント名前空間に対応する引数は通常は <filename>mnt:/proc/PID/fd/12</filename> のようになります。
+            </para>
+          </listitem>
+        </varlistentry>
       </variablelist>
       <variablelist>
 	<varlistentry>
